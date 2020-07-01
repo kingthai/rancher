@@ -4,13 +4,13 @@ import (
 	"context"
 	"fmt"
 	"github.com/coreos/pkg/httputil"
-	"github.com/emicklei/go-restful"
 	"github.com/rancher/rancher/pkg/registries"
 	"github.com/sirupsen/logrus"
 	"io"
 	"io/ioutil"
+	"k8s.io/client-go/rest"
 	"net/http"
-	"strings"
+	"time"
 
 	"github.com/gorilla/mux"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -42,7 +42,11 @@ import (
 	managementSchema "github.com/rancher/types/apis/management.cattle.io/v3/schema"
 	"github.com/rancher/types/config"
 	"k8s.io/client-go/informers"
+	clientset "k8s.io/client-go/kubernetes"
 )
+
+var restConfig *rest.Config
+var sc *config.ScaledContext
 
 func Start(ctx context.Context, localClusterEnabled bool, scaledContext *config.ScaledContext, clusterManager *clustermanager.Manager, auditLogWriter *audit.LogWriter, authz auth.Middleware) (auth.Middleware, http.Handler, error) {
 	tokenAPI, err := tokens.NewAPIHandler(ctx, scaledContext)
@@ -101,6 +105,9 @@ func Start(ctx context.Context, localClusterEnabled bool, scaledContext *config.
 	samlRoot := saml.AuthHandler()
 	chain := responsewriter.NewMiddlewareChain(responsewriter.Gzip, responsewriter.NoCache, responsewriter.DenyFrameOptions, responsewriter.ContentType, ui.UI)
 	chainGzip := responsewriter.NewMiddlewareChain(responsewriter.Gzip, responsewriter.ContentType)
+
+	restConfig = &scaledContext.RESTConfig
+	sc = scaledContext
 
 	root.HandleFunc("/search/docker/image", searchDockersHandler)
 	root.HandleFunc("/search/dockerhub/products", searchDockerhubImagesHandler)
@@ -193,10 +200,10 @@ func searchDockerhubImagesHandler(w http.ResponseWriter, r *http.Request) {
 	url := fmt.Sprintf("https://store.docker.com/api/content/v1/products/search/?&type=%s&page=1&page_size=%s", searchType, pagesize)
 
 	if q != "" {
-		url += "&q="+q
+		url += "&q=" + q
 	}
 	if imageFilter != "" {
-		url += "&image_filter="+imageFilter
+		url += "&image_filter=" + imageFilter
 	}
 
 	//res, err := grequests.Get(url, nil)
@@ -214,7 +221,7 @@ func searchDockerhubImagesHandler(w http.ResponseWriter, r *http.Request) {
 	req.Header.Add("Search-Version", "v3")
 	//http client
 	client := &http.Client{}
-	logrus.Debugf("Go %s URL : %s \n",http.MethodGet, req.URL.String())
+	logrus.Debugf("Go %s URL : %s \n", http.MethodGet, req.URL.String())
 	res, err := client.Do(req)
 	if err != nil {
 		logrus.Error(err)
@@ -227,7 +234,7 @@ func searchDockerhubImagesHandler(w http.ResponseWriter, r *http.Request) {
 	//httputil.WriteJSONResponse(w, http.StatusOK, resp)
 }
 
-func searchDockersHandler(w http.ResponseWriter, r *http.Request)  {
+func searchDockersHandler(w http.ResponseWriter, r *http.Request) {
 	logrus.Infof("cxx-req docker: %+v", r)
 	//params := mux.Vars(r)
 	params := r.URL.Query()
@@ -236,92 +243,29 @@ func searchDockersHandler(w http.ResponseWriter, r *http.Request)  {
 	secretName := params.Get("secret")
 	//httputil.WriteJSONResponse(w, http.StatusOK, params["name"])
 
+	a, err := sc.Core.Secrets(namespace).Controller().Lister().Get(namespace, secretName)
+	if err != nil {
+		logrus.Errorf("get_secret err: %s", err)
+	}
+	logrus.Infof("get_secret %+v", a)
+
 	// get entry
-	entry, err := registries.GetEntryBySecret(namespace, secretName)
+	cs, err := clientset.NewForConfig(restConfig)
+	if err != nil {
+		logrus.Errorf("create_client err: %s", err)
+	}
+	registryGetter := registries.NewRegistryGetter(informers.NewSharedInformerFactory(cs, 2*time.Hour))
+
+	entry, err := registryGetter.GetEntry(namespace, secretName, imageName)
+	logrus.Infof("image_entry: %+v", entry)
 	if err != nil {
 		logrus.Errorf("%+v", err)
 		httputil.WriteJSONResponse(w, http.StatusBadRequest, &registries.ImageDetails{Status: registries.StatusFailed, Message: err.Error()})
 		return
 	}
 
-	// default use ssl
-	checkSSl := func(serverAddress string) bool {
-		if strings.HasPrefix(serverAddress, "http://") {
-			return false
-		} else {
-			return true
-		}
-	}
-
-	if strings.HasPrefix(imageName, "http") {
-		dockerurl, err := registries.ParseDockerURL(imageName)
-		if err != nil {
-			logrus.Errorf("%+v", err)
-			httputil.WriteJSONResponse(w, http.StatusBadRequest, &registries.ImageDetails{Status: registries.StatusFailed, Message: err.Error()})
-			return
-		}
-		imageName = dockerurl.StringWithoutScheme()
-	}
-
-	// parse image
-	image, err := registries.ParseImage(imageName)
-	if err != nil {
-		logrus.Errorf("%+v", err)
-		httputil.WriteJSONResponse(w, http.StatusBadRequest, &registries.ImageDetails{Status: registries.StatusFailed, Message: err.Error()})
-		return
-	}
-
-	useSSL := checkSSl(entry.ServerAddress)
-
-	// Create the registry client.
-	reg, err := registries.CreateRegistryClient(entry.Username, entry.Password, image.Domain, useSSL)
-	if err != nil {
-		logrus.Errorf("%+v", err)
-		httputil.WriteJSONResponse(w, http.StatusBadRequest, &registries.ImageDetails{Status: registries.StatusFailed, Message: err.Error()})
-		return
-	}
-
-	digestUrl := reg.GetDigestUrl(image)
-
-	// Get token.
-	token, err := reg.Token(digestUrl)
-	if err != nil {
-		logrus.Errorf("%+v", err)
-		httputil.WriteJSONResponse(w, http.StatusBadRequest, &registries.ImageDetails{Status: registries.StatusFailed, Message: err.Error()})
-		return
-	}
-
-	// Get digest.
-	imageManifest, err := reg.ImageManifest(image, token)
-	if err != nil {
-		if serviceError, ok := err.(restful.ServiceError); ok {
-			httputil.WriteJSONResponse(w, http.StatusBadRequest, &registries.ImageDetails{Status: registries.StatusFailed, Message: serviceError.Message})
-			return
-		}
-		logrus.Errorf("%+v", err)
-		httputil.WriteJSONResponse(w, http.StatusBadRequest, &registries.ImageDetails{Status: registries.StatusFailed, Message: err.Error()})
-		return
-	}
-	image.Digest = imageManifest.ManifestConfig.Digest
-
-	// Get blob.
-	imageBlob, err := reg.ImageBlob(image, token)
-	if err != nil {
-		logrus.Errorf("%+v", err)
-		httputil.WriteJSONResponse(w, http.StatusBadRequest, &registries.ImageDetails{Status: registries.StatusFailed, Message: err.Error()})
-		return
-	}
-
-	imageDetails := &registries.ImageDetails{
-		Status:        registries.StatusSuccess,
-		ImageManifest: imageManifest,
-		ImageBlob:     imageBlob,
-		ImageTag:      image.Tag,
-		Registry:      image.Domain,
-	}
-	httputil.WriteJSONResponse(w, http.StatusOK, imageDetails)
+	httputil.WriteJSONResponse(w, http.StatusOK, entry)
 }
-
 
 func verifyRegistryCredentialHandler(w http.ResponseWriter, r *http.Request) {
 	params := r.URL.Query()
@@ -329,10 +273,14 @@ func verifyRegistryCredentialHandler(w http.ResponseWriter, r *http.Request) {
 	password := params.Get("password")
 	serverHost := params.Get("serverhost")
 
-	// get entry
-	registryGetter := registries.NewRegistryGetter(informers.SharedInformerFactory)
+	cs, err := clientset.NewForConfig(restConfig)
+	if err != nil {
+		logrus.Errorf("create_client err: %s", err)
+	}
 
-	err := registries.RegistryVerify(registries.AuthInfo{Username: username, Password: password, ServerHost: serverHost})
+	registryGetter := registries.NewRegistryGetter(informers.NewSharedInformerFactory(cs, 2*time.Hour))
+
+	err = registryGetter.VerifyRegistryCredential(registries.RegistryCredential{Username: username, Password: password, ServerHost: serverHost})
 	if err != nil {
 		logrus.Errorf("%+v", err)
 		httputil.WriteJSONResponse(w, http.StatusBadRequest, err)
