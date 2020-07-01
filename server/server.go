@@ -10,7 +10,6 @@ import (
 	"io/ioutil"
 	"k8s.io/client-go/rest"
 	"net/http"
-	"time"
 
 	"github.com/gorilla/mux"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -41,8 +40,6 @@ import (
 	"github.com/rancher/steve/pkg/responsewriter"
 	managementSchema "github.com/rancher/types/apis/management.cattle.io/v3/schema"
 	"github.com/rancher/types/config"
-	"k8s.io/client-go/informers"
-	clientset "k8s.io/client-go/kubernetes"
 )
 
 var restConfig *rest.Config
@@ -241,20 +238,9 @@ func searchDockersHandler(w http.ResponseWriter, r *http.Request) {
 	imageName := params.Get("image")
 	namespace := params.Get("namespace")
 	secretName := params.Get("secret")
-	//httputil.WriteJSONResponse(w, http.StatusOK, params["name"])
-
-	a, err := sc.Core.Secrets(namespace).Controller().Lister().Get(namespace, secretName)
-	if err != nil {
-		logrus.Errorf("get_secret err: %s", err)
-	}
-	logrus.Infof("get_secret %+v", a)
 
 	// get entry
-	cs, err := clientset.NewForConfig(restConfig)
-	if err != nil {
-		logrus.Errorf("create_client err: %s", err)
-	}
-	registryGetter := registries.NewRegistryGetter(informers.NewSharedInformerFactory(cs, 2*time.Hour))
+	registryGetter := registries.NewRegistryGetter(sc)
 
 	entry, err := registryGetter.GetEntry(namespace, secretName, imageName)
 	logrus.Infof("image_entry: %+v", entry)
@@ -273,14 +259,9 @@ func verifyRegistryCredentialHandler(w http.ResponseWriter, r *http.Request) {
 	password := params.Get("password")
 	serverHost := params.Get("serverhost")
 
-	cs, err := clientset.NewForConfig(restConfig)
-	if err != nil {
-		logrus.Errorf("create_client err: %s", err)
-	}
+	registryGetter := registries.NewRegistryGetter(sc)
 
-	registryGetter := registries.NewRegistryGetter(informers.NewSharedInformerFactory(cs, 2*time.Hour))
-
-	err = registryGetter.VerifyRegistryCredential(registries.RegistryCredential{Username: username, Password: password, ServerHost: serverHost})
+	err := registryGetter.VerifyRegistryCredential(registries.RegistryCredential{Username: username, Password: password, ServerHost: serverHost})
 	if err != nil {
 		logrus.Errorf("%+v", err)
 		httputil.WriteJSONResponse(w, http.StatusBadRequest, err)

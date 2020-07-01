@@ -1,20 +1,3 @@
-/*
-
- Copyright 2019 The KubeSphere Authors.
-
- Licensed under the Apache License, Version 2.0 (the "License");
- you may not use this file except in compliance with the License.
- You may obtain a copy of the License at
-
-     http://www.apache.org/licenses/LICENSE-2.0
-
- Unless required by applicable law or agreed to in writing, software
- distributed under the License is distributed on an "AS IS" BASIS,
- WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- See the License for the specific language governing permissions and
- limitations under the License.
-
-*/
 package registries
 
 import (
@@ -25,8 +8,10 @@ import (
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/client"
 	"github.com/emicklei/go-restful"
+	"github.com/rancher/types/config"
+	"github.com/sirupsen/logrus"
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/client-go/informers"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/klog"
 	"strings"
 )
@@ -65,18 +50,19 @@ type RegistryGetter interface {
 }
 
 type registryGetter struct {
-	informers informers.SharedInformerFactory
+	//informers informers.SharedInformerFactory
+	sc *config.ScaledContext
 }
 
-func NewRegistryGetter(informers informers.SharedInformerFactory) RegistryGetter {
-	return &registryGetter{informers: informers}
+func NewRegistryGetter(sc *config.ScaledContext) RegistryGetter {
+	return &registryGetter{sc: sc}
 }
 
 func (c *registryGetter) VerifyRegistryCredential(credential RegistryCredential) error {
 	auth := base64.StdEncoding.EncodeToString([]byte(credential.Username + ":" + credential.Password))
 	ctx := context.Background()
 	cli, err := client.NewClientWithOpts(client.WithAPIVersionNegotiation())
-
+	logrus.Infof("cxx_docker_cli: %+v", cli)
 	if err != nil {
 		klog.Error(err)
 	}
@@ -89,6 +75,7 @@ func (c *registryGetter) VerifyRegistryCredential(credential RegistryCredential)
 	}
 
 	resp, err := cli.RegistryLogin(ctx, config)
+	logrus.Infof("cxx_docker_cli: %+v", resp)
 	cli.Close()
 
 	if err != nil {
@@ -122,11 +109,13 @@ func  (c *registryGetter)  getEntryBySecret(namespace, secretName, imageName str
 	if namespace == "" || secretName == "" {
 		config = &DockerConfigEntry{}
 	} else {
-		secret, err := c.informers.Core().V1().Secrets().Lister().Secrets(namespace).Get(secretName)
+		secret, err := c.sc.Core.Secrets(namespace).Get(secretName, metav1.GetOptions{})
+		//secret, err := c.informers.Core().V1().Secrets().Lister().Secrets(namespace).Get(secretName)
 		if err != nil {
 			return failedImageDetails, err
 		}
 		config, err = getDockerEntryFromDockerSecret(secret)
+		logrus.Infof("docker_config: %+v", config)
 		if err != nil {
 			return failedImageDetails, err
 		}
