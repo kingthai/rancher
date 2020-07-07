@@ -106,9 +106,10 @@ func Start(ctx context.Context, localClusterEnabled bool, scaledContext *config.
 	restConfig = &scaledContext.RESTConfig
 	sc = scaledContext
 
-	root.HandleFunc("/search/docker/image", searchDockersHandler)
+	root.HandleFunc("/search/docker/s", searchDockersHandler)
 	root.HandleFunc("/search/dockerhub/products", searchDockerhubImagesHandler)
 	root.HandleFunc("/registry/credential/verify", verifyRegistryCredentialHandler)
+	root.HandleFunc("/search/docker/tags", searchDockerTagsHandler)
 
 	root.Handle("/", chain.Handler(managementAPI))
 	root.PathPrefix("/v3-public").Handler(publicAPI)
@@ -269,4 +270,26 @@ func verifyRegistryCredentialHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.WriteHeader(http.StatusOK)
+}
+
+func searchDockerTagsHandler(w http.ResponseWriter, r *http.Request) {
+	logrus.Infof("cxx-req docker: %+v", r)
+	//params := mux.Vars(r)
+	params := r.URL.Query()
+	imageName := params.Get("image")
+	namespace := params.Get("namespace")
+	secretName := params.Get("secret")
+
+	// get entry
+	registryGetter := registries.NewRegistryGetter(sc)
+
+	tags, err := registryGetter.GetEntryTags(namespace, secretName, imageName)
+	logrus.Infof("image_tags: %+v", tags)
+	if err != nil {
+		logrus.Errorf("%+v", err)
+		httputil.WriteJSONResponse(w, http.StatusBadRequest, &registries.ImageDetails{Status: registries.StatusFailed, Message: err.Error()})
+		return
+	}
+
+	httputil.WriteJSONResponse(w, http.StatusOK, tags)
 }

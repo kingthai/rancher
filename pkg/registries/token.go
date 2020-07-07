@@ -1,6 +1,7 @@
 package registries
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -92,6 +93,42 @@ func (r *Registry) Token(url string) (str string, err error) {
 
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("getting image failed with secret")
+	}
+
+	var authToken authToken
+	if err := json.NewDecoder(resp.Body).Decode(&authToken); err != nil {
+		return "", err
+	}
+
+	token, err := authToken.String()
+	return token, err
+}
+
+func (r *Registry) GetLoginUrl() string {
+	url := r.url("/v2/users/login/")
+	return url
+}
+func (r *Registry) TokenWithLogin(loginUrl string) (str string, err error) {
+	options := make(map[string]string)
+	options["username"] = r.Username
+	options["password"] = r.Password
+	params, _ := json.Marshal(options)
+
+	req, err := http.NewRequest("POST", loginUrl, bytes.NewBuffer(params))
+	req.Header.Set("Content-Type", "application/json")
+	if err != nil {
+		return "", err
+	}
+
+	resp, err := r.Client.Do(req)
+	if err != nil {
+		return "", err
+	}
+
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("login failed")
 	}
 
 	var authToken authToken

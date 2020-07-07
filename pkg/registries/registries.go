@@ -1,18 +1,13 @@
 package registries
 
 import (
-	"context"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"github.com/docker/docker/api/types"
-	"github.com/docker/docker/client"
 	"github.com/emicklei/go-restful"
 	"github.com/rancher/types/config"
 	"github.com/sirupsen/logrus"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/klog"
 	"strings"
 )
 
@@ -47,6 +42,7 @@ type DockerConfigEntry struct {
 type RegistryGetter interface {
 	VerifyRegistryCredential(credential RegistryCredential) error
 	GetEntry(namespace, secretName, imageName string) (ImageDetails, error)
+	GetEntryTags(namespace, secretName, imageName string) ([]string, error)
 }
 
 type registryGetter struct {
@@ -59,34 +55,50 @@ func NewRegistryGetter(sc *config.ScaledContext) RegistryGetter {
 }
 
 func (c *registryGetter) VerifyRegistryCredential(credential RegistryCredential) error {
-	auth := base64.StdEncoding.EncodeToString([]byte(credential.Username + ":" + credential.Password))
-	ctx := context.Background()
-	cli, err := client.NewClientWithOpts(client.WithAPIVersionNegotiation())
-	logrus.Infof("cxx_docker_cli: %+v", cli)
-	if err != nil {
-		klog.Error(err)
-	}
-
-	config := types.AuthConfig{
-		Username:      credential.Username,
-		Password:      credential.Password,
-		Auth:          auth,
-		ServerAddress: credential.ServerHost,
-	}
-
-	resp, err := cli.RegistryLogin(ctx, config)
-	logrus.Infof("cxx_docker_cli: %+v", resp)
-	cli.Close()
-
+	// 这里取巧了一下，直接创建客户端获取token，如果成功，说明账号密码域名 都是正确的
+	// 只能验证 官方docker api的接口， 私有harbor的接口  不同，这里不能认证
+	cli, err := CreateRegistryClient(credential.Username, credential.Password, credential.ServerHost, true)
 	if err != nil {
 		return err
 	}
 
-	if resp.Status == loginSuccess {
-		return nil
-	} else {
-		return fmt.Errorf(resp.Status)
+	loginUrl := cli.GetLoginUrl()
+	logrus.Debugln("token:", loginUrl)
+
+	// Get token.
+	token, err := cli.TokenWithLogin(loginUrl)
+	if err != nil || token == "" {
+		return err
 	}
+	return nil
+	//auth := base64.StdEncoding.EncodeToString([]byte(credential.Username + ":" + credential.Password))
+	//ctx := context.Background()
+	//cli, err := client.NewClientWithOpts(client.WithAPIVersionNegotiation())
+	//logrus.Infof("cxx_docker_cli: %+v", cli)
+	//if err != nil {
+	//	klog.Error(err)
+	//}
+	//
+	//config := types.AuthConfig{
+	//	Username:      credential.Username,
+	//	Password:      credential.Password,
+	//	Auth:          auth,
+	//	ServerAddress: credential.ServerHost,
+	//}
+	//
+	//resp, err := cli.RegistryLogin(ctx, config)
+	//logrus.Infof("cxx_docker_cli: %+v", resp)
+	//cli.Close()
+	//
+	//if err != nil {
+	//	return err
+	//}
+	//
+	//if resp.Status == loginSuccess {
+	//	return nil
+	//} else {
+	//	return fmt.Errorf(resp.Status)
+	//}
 }
 
 func (c *registryGetter) GetEntry(namespace, secretName, imageName string) (ImageDetails, error) {
@@ -98,7 +110,7 @@ func (c *registryGetter) GetEntry(namespace, secretName, imageName string) (Imag
 	return imageDetails, err
 }
 
-func  (c *registryGetter)  getEntryBySecret(namespace, secretName, imageName string) (ImageDetails, error) {
+func  (c *registryGetter) getEntryBySecret(namespace, secretName, imageName string) (ImageDetails, error) {
 	failedImageDetails := ImageDetails{
 		Status:  StatusFailed,
 		Message: "",
@@ -210,3 +222,67 @@ func getDockerEntryFromDockerSecret(instance *corev1.Secret) (dockerConfigEntry 
 	}
 	return nil, nil
 }
+
+func  (c *registryGetter) GetEntryTags(namespace, secretName, imageName string) ([]string, error) {
+	var config *DockerConfigEntry
+
+	if namespace == "" || secretName == "" {
+		config = &DockerConfigEntry{}
+	} else {
+		secret, err := c.sc.Core.Secrets(namespace).Get(secretName, metav1.GetOptions{})
+		if err != nil {
+			return nil, err
+		}
+		config, err = getDockerEntryFromDockerSecret(secret)
+		logrus.Infof("docker_config: %+v", config)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	// default use ssl
+	checkSSl := func(serverAddress string) bool {
+		if strings.HasPrefix(serverAddress, "http://") {
+			return false
+		} else {
+			return true
+		}
+	}
+
+	if strings.HasPrefix(imageName, "http") {
+		dockerurl, err := ParseDockerURL(imageName)
+		if err != nil {
+			return nil, err
+		}
+		imageName = dockerurl.StringWithoutScheme()
+	}
+
+	// parse image
+	image, err := ParseImage(imageName)
+	if err != nil {
+		return nil, err
+	}
+
+	useSSL := checkSSl(config.ServerAddress)
+
+	// Create the registry client.
+	r, err := CreateRegistryClient(config.Username, config.Password, image.Domain, useSSL)
+	if err != nil {
+		return nil, err
+	}
+
+	tagsUrl := r.GetTagsUrl(image)
+
+	// Get token.
+	token, err := r.Token(tagsUrl)
+	if err != nil {
+		return nil, err
+	}
+
+	tags, err := r.ImageTags(image, token)
+	if err != nil {
+		return nil, err
+	}
+	return tags, nil
+}
+
