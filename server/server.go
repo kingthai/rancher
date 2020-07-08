@@ -106,7 +106,7 @@ func Start(ctx context.Context, localClusterEnabled bool, scaledContext *config.
 	restConfig = &scaledContext.RESTConfig
 	sc = scaledContext
 
-	root.HandleFunc("/search/docker/s", searchDockersHandler)
+	root.HandleFunc("/search/docker/image", searchDockersHandler)
 	root.HandleFunc("/search/dockerhub/products", searchDockerhubImagesHandler)
 	root.HandleFunc("/registry/credential/verify", verifyRegistryCredentialHandler)
 	root.HandleFunc("/search/docker/tags", searchDockerTagsHandler)
