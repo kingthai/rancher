@@ -153,6 +153,7 @@ func  (c *registryGetter) getEntryBySecret(namespace, secretName, imageName stri
 	// parse image
 	image, err := ParseImage(imageName)
 	if err != nil {
+		logrus.Error("parse_image: ", err)
 		return failedImageDetails, err
 	}
 
@@ -161,6 +162,7 @@ func  (c *registryGetter) getEntryBySecret(namespace, secretName, imageName stri
 	// Create the registry client.
 	r, err := CreateRegistryClient(config.Username, config.Password, image.Domain, useSSL)
 	if err != nil {
+		logrus.Error("create registry cline err: ", err)
 		return failedImageDetails, err
 	}
 
@@ -169,6 +171,7 @@ func  (c *registryGetter) getEntryBySecret(namespace, secretName, imageName stri
 	// Get token.
 	token, err := r.Token(digestUrl)
 	if err != nil {
+		logrus.Error("get token err: ", err)
 		return failedImageDetails, err
 	}
 
@@ -176,17 +179,23 @@ func  (c *registryGetter) getEntryBySecret(namespace, secretName, imageName stri
 	imageManifest, err := r.ImageManifest(image, token)
 	if err != nil {
 		if serviceError, ok := err.(restful.ServiceError); ok {
+			logrus.Error("get image manifest restful err: ", err)
 			return failedImageDetails, serviceError
 		}
+		logrus.Error("get image manifest err: ", err)
 		return failedImageDetails, err
 	}
 
 	image.Digest = imageManifest.ManifestConfig.Digest
 
 	// Get blob.
+	// some blob get failed, it's normal
 	imageBlob, err := r.ImageBlob(image, token)
 	if err != nil {
-		return failedImageDetails, err
+		logrus.Error("get image blob err: ", err)
+
+		// get blob failed
+		imageBlob = nil
 	}
 
 	return ImageDetails{
