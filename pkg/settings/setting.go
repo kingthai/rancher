@@ -179,7 +179,7 @@ func getMetadataConfig() string {
 	}
 	data := map[string]interface{}{
 		"url":                      fmt.Sprintf("https://releases.rancher.com/kontainer-driver-metadata/%s/data.json", branch),
-		"refresh-interval-minutes": "1440",
+		"refresh-interval-minutes": "0",
 	}
 	ans, err := json.Marshal(data)
 	if err != nil {

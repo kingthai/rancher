@@ -189,12 +189,42 @@ func newProxy(scaledContext *config.ScaledContext) http.Handler {
 	return httpproxy.NewProxy("/proxy/", whitelist.Proxy.Get, scaledContext)
 }
 
+func searchHarborImages(w http.ResponseWriter, r *http.Request) {
+	logrus.Infof("cxx-req search harbor: %+v", r)
+	params := r.URL.Query()
+	namespace := params.Get("namespace")
+	secretName := params.Get("secret_name")
+	imageDomain := params.Get("image_domain")
+	imageName := params.Get("image_name")
+
+	// get entry
+	registryGetter := registries.NewRegistryGetter(sc)
+
+	list, err := registryGetter.SearchHarborImages(namespace, secretName, imageDomain, imageName)
+	if err != nil {
+		logrus.Errorf("%+v", err)
+		httputil.WriteJSONResponse(w, http.StatusBadRequest, &registries.ImageDetails{Status: registries.StatusFailed, Message: err.Error()})
+		return
+	}
+
+	httputil.WriteJSONResponse(w, http.StatusOK, list)
+}
+
 func searchDockerhubImagesHandler(w http.ResponseWriter, r *http.Request) {
 	params := r.URL.Query()
 	q := params.Get("q")
 	pagesize := params.Get("page_size")
 	searchType := params.Get("type")
 	imageFilter := params.Get("image_filter")
+	label := params.Get("label")
+
+	// harbor 搜索单独处理
+	if label == "harbor" {
+		searchHarborImages(w, r)
+		return
+	}
+
+	// dockerhub 搜索
 	url := fmt.Sprintf("https://store.docker.com/api/content/v1/products/search/?&type=%s&page=1&page_size=%s", searchType, pagesize)
 
 	if q != "" {
@@ -204,10 +234,6 @@ func searchDockerhubImagesHandler(w http.ResponseWriter, r *http.Request) {
 		url += "&image_filter=" + imageFilter
 	}
 
-	//res, err := grequests.Get(url, nil)
-	//if err != nil{
-	//	logrus.Error("cxx-req Unable to make request: ", err)
-	//}
 	// new request
 	req, err := http.NewRequest(http.MethodGet, url, nil)
 	if err != nil {
@@ -229,7 +255,6 @@ func searchDockerhubImagesHandler(w http.ResponseWriter, r *http.Request) {
 	resp, _ := ioutil.ReadAll(res.Body)
 	fmt.Printf("%s", resp)
 	io.WriteString(w, string(resp))
-	//httputil.WriteJSONResponse(w, http.StatusOK, resp)
 }
 
 func searchDockersHandler(w http.ResponseWriter, r *http.Request) {

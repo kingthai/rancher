@@ -112,3 +112,31 @@ type Layers struct {
 	Size      int    `json:"size,omitempty" description:"The size in bytes of the layer."`
 	Digest    string `json:"digest,omitempty" description:"The digest of the content, as defined by the Registry V2 HTTP API Specificiation. Reference https://docs.docker.com/registry/spec/api/#digest-parameter"`
 }
+
+type ImageHarbor struct {
+	Project []HarborProject `json:"project"`
+	Repository []Repository `json:"repository"`
+}
+
+type HarborProject struct {
+	ProjectID         int         `json:"project_id"`
+	OwnerID           int         `json:"owner_id"`
+	Name              string      `json:"name"`
+	CreationTime      time.Time   `json:"creation_time"`
+	UpdateTime        time.Time   `json:"update_time"`
+	Deleted           int         `json:"deleted"`
+	OwnerName         string      `json:"owner_name"`
+	Togglable         bool        `json:"togglable"`
+	CurrentUserRoleID int         `json:"current_user_role_id"`
+	RepoCount         int         `json:"repo_count"`
+	Metadata          interface{} `json:"metadata"`
+}
+
+type Repository struct {
+	ProjectID      int    `json:"project_id"`
+	ProjectName    string `json:"project_name"`
+	ProjectPublic  bool   `json:"project_public"`
+	PullCount      int    `json:"pull_count"`
+	RepositoryName string `json:"repository_name"`
+	TagsCount      int    `json:"tags_count"`
+}

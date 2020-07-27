@@ -2,6 +2,7 @@ package registries
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -107,6 +108,10 @@ func (r *Registry) Token(url string) (str string, err error) {
 func (r *Registry) GetLoginUrl() string {
 	url := r.url("/v2/users/login/")
 	return url
+}
+func (r *Registry) GetHarborToken() string {
+	token := base64.StdEncoding.EncodeToString([]byte(r.Username + ":" + r.Password))
+	return token
 }
 func (r *Registry) TokenWithLogin(loginUrl string) (str string, err error) {
 	options := make(map[string]string)
