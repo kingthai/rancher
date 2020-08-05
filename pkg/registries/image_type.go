@@ -140,3 +140,25 @@ type Repository struct {
 	RepositoryName string `json:"repository_name"`
 	TagsCount      int    `json:"tags_count"`
 }
+
+type ImageHarborList []struct {
+	ID          int    `json:"id"`
+	Name        string `json:"name"`
+	ProjectID   int    `json:"project_id"`
+	Description string `json:"description"`
+	PullCount   int    `json:"pull_count"`
+	StarCount   int    `json:"star_count"`
+	TagsCount   int    `json:"tags_count"`
+	Labels      []struct {
+		ID           int    `json:"id"`
+		Name         string `json:"name"`
+		Description  string `json:"description"`
+		Color        string `json:"color"`
+		Scope        int    `json:"scope"`
+		ProjectID    int    `json:"project_id"`
+		CreationTime string `json:"creation_time"`
+		UpdateTime   string `json:"update_time"`
+	} `json:"labels"`
+	CreationTime string `json:"creation_time"`
+	UpdateTime   string `json:"update_time"`
+}

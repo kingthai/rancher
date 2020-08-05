@@ -43,7 +43,8 @@ type RegistryGetter interface {
 	VerifyRegistryCredential(credential RegistryCredential) error
 	GetEntry(namespace, secretName, imageName string) (ImageDetails, error)
 	GetEntryTags(namespace, secretName, imageName string) ([]string, error)
-	SearchHarborImages(namespace, secretName, imageDomain ,imageName string) (*ImageHarbor, error)
+	SearchHarborImages(namespace, secretName, imageDomain, imageName string) (*ImageHarbor, error)
+	ListHarborImages(namespace, secretName, imageDomain string) (*ImageHarborList, error)
 }
 
 type registryGetter struct {
@@ -342,6 +343,50 @@ func  (c *registryGetter) SearchHarborImages(namespace, secretName, imageDomain,
 	token:= r.GetHarborToken()
 
 	list, err := r.ImageSearchHarbor(imageName, token)
+	if err != nil {
+		return nil, err
+	}
+	return list, nil
+}
+
+func  (c *registryGetter) ListHarborImages(namespace, secretName, imageDomain string) (*ImageHarborList, error) {
+	var config *DockerConfigEntry
+
+	if namespace == "" || secretName == "" {
+		config = &DockerConfigEntry{}
+	} else {
+		secret, err := c.sc.Core.Secrets(namespace).Get(secretName, metav1.GetOptions{})
+		if err != nil {
+			return nil, err
+		}
+		config, err = getDockerEntryFromDockerSecret(secret)
+		logrus.Infof("docker_config: %+v", config)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	// default use ssl
+	checkSSl := func(serverAddress string) bool {
+		if strings.HasPrefix(serverAddress, "http://") {
+			return false
+		} else {
+			return true
+		}
+	}
+
+	useSSL := checkSSl(config.ServerAddress)
+
+	// Create the registry client.
+	r, err := CreateRegistryClient(config.Username, config.Password, imageDomain, useSSL)
+	if err != nil {
+		return nil, err
+	}
+
+	// Get token.
+	token:= r.GetHarborToken()
+
+	list, err := r.ImageListHarbor(token)
 	if err != nil {
 		return nil, err
 	}

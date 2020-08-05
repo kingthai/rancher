@@ -110,6 +110,7 @@ func Start(ctx context.Context, localClusterEnabled bool, scaledContext *config.
 	root.HandleFunc("/search/dockerhub/products", searchDockerhubImagesHandler)
 	root.HandleFunc("/registry/credential/verify", verifyRegistryCredentialHandler)
 	root.HandleFunc("/search/docker/tags", searchDockerTagsHandler)
+	root.HandleFunc("/registry/harbor/list", listHarborImagesHandler)
 
 	root.Handle("/", chain.Handler(managementAPI))
 	root.PathPrefix("/v3-public").Handler(publicAPI)
@@ -317,4 +318,24 @@ func searchDockerTagsHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	httputil.WriteJSONResponse(w, http.StatusOK, tags)
+}
+
+func listHarborImagesHandler(w http.ResponseWriter, r *http.Request) {
+	logrus.Infof("cxx-req list harbor: %+v", r)
+	params := r.URL.Query()
+	namespace := params.Get("namespace")
+	secretName := params.Get("secret_name")
+	imageDomain := params.Get("image_domain")
+
+	// get entry
+	registryGetter := registries.NewRegistryGetter(sc)
+
+	list, err := registryGetter.ListHarborImages(namespace, secretName, imageDomain)
+	if err != nil {
+		logrus.Errorf("%+v", err)
+		httputil.WriteJSONResponse(w, http.StatusBadRequest, &registries.ImageDetails{Status: registries.StatusFailed, Message: err.Error()})
+		return
+	}
+
+	httputil.WriteJSONResponse(w, http.StatusOK, list)
 }
